@@ -1,0 +1,58 @@
+seed: 42
+
+data:
+  raw_path: data/raw/application_train.csv
+  target_column: TARGET
+  protected_attribute: CODE_GENDER
+  test_size: 0.2
+  cv_folds: 5
+
+# These two numbers ARE the project. Fill them in as a team and write down
+# the reasoning — do not leave them at a default and move on.
+cost_assumptions:
+  loss_given_default: null   # e.g. average outstanding principal at default
+  expected_interest: null    # e.g. avg interest income if the loan performs
+  reasoning: >
+    TODO — write down why these specific numbers, and what they're sourced
+    from (a stated assumption, an external benchmark, or the data itself).
+
+models:
+  - name: baseline
+    type: majority_class
+
+  - name: logistic_regression
+    type: sklearn.linear_model.LogisticRegression
+    params:
+      class_weight: balanced
+      max_iter: 1000
+
+  - name: decision_tree
+    type: sklearn.tree.DecisionTreeClassifier
+    params:
+      max_depth: 4
+      class_weight: balanced
+
+  - name: random_forest
+    type: sklearn.ensemble.RandomForestClassifier
+    params:
+      n_estimators: 300
+      class_weight: balanced_subsample
+
+  - name: lightgbm
+    type: lightgbm.LGBMClassifier
+    params:
+      scale_pos_weight: 11   # placeholder — recompute from actual class ratio
+      n_estimators: 500
+
+calibration:
+  method: isotonic          # CalibratedClassifierCV
+  split: cv                 # "cv" keeps all training rows; "holdout" is simpler
+                             # but costs you data — team decision, see notes
+
+metrics:
+  primary: pr_auc
+  secondary: [roc_auc, brier_score, accuracy]
+
+fairness:
+  primary_metric: demographic_parity   # or equalized_odds — pick one, document why
+  run_proxy_ablation: true             # drop protected_attribute, retrain, compare gap

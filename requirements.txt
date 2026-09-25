@@ -1,0 +1,12 @@
+pandas
+numpy
+scikit-learn
+lightgbm
+shap
+matplotlib
+seaborn
+pyyaml
+jupyter
+
+# add later, week 4 only:
+# streamlit

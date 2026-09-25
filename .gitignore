@@ -1,0 +1,9 @@
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+artifacts/*.pkl
+artifacts/metrics.json
+__pycache__/
+.ipynb_checkpoints/
+.venv/
