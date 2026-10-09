@@ -2,6 +2,8 @@ data/raw/*
 !data/raw/.gitkeep
 data/processed/*
 !data/processed/.gitkeep
+# The frozen split is committed so every teammate uses the identical test set.
+!data/processed/split.csv
 artifacts/*.pkl
 artifacts/metrics.json
 __pycache__/

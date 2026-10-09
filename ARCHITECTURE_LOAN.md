@@ -39,22 +39,24 @@ data/raw/application_train.csv
         │                 into one Pipeline, fits via 5-fold CV on train split,
         │                 saves artifacts/pipeline.pkl
         ▼
-   evaluate.py            loads pipeline.pkl, predicts probabilities,
-        │                  calibrates (CalibratedClassifierCV), sweeps the
-        │                  profit threshold, touches the held-out test set
-        │                  exactly once here
+   evaluate.py            loads pipeline.pkl, calibrates (CalibratedClassifierCV)
+        │                  on the train split, saves calibrated_pipeline.pkl,
+        │                  picks the profit threshold on train out-of-fold
+        │                  probabilities, then touches the held-out test set
+        │                  exactly once to report at that fixed threshold
         ▼
-   fairness.py             loads calibrated pipeline, computes group metrics,
-                            runs the protected-attribute ablation, generates
-                            SHAP-based adverse-action reasons
+   fairness.py             loads calibrated_pipeline.pkl + the chosen threshold,
+                            computes group metrics, runs the protected-attribute
+                            ablation, generates SHAP-based adverse-action reasons
 ```
 
-`app.py` (week 4 only) loads `artifacts/pipeline.pkl` directly — no
-reimplementation of preprocessing, because the artifact already contains it.
+`app.py` (week 4 only) loads `artifacts/calibrated_pipeline.pkl` directly — no
+reimplementation of preprocessing or calibration, because the artifact
+already contains both. It must NOT load the uncalibrated `pipeline.pkl`.
 
 ## Two preprocessing branches inside features.py
 
-- **Branch A (logistic regression, random forest):** one-hot encode
+- **Branch A (logistic regression, decision tree, random forest):** one-hot encode
   categoricals, median-impute numerics, standard-scale.
 - **Branch B (LightGBM):** native categorical handling, raw nulls passed
   through — LightGBM has a learned default direction for missing values, and
@@ -99,8 +101,8 @@ pipeline stays swappable.
 ## What breaks if requirements shift
 
 - **Different dataset:** touch `features.py` and `config.yaml`. Nothing else.
-- **Different model** (e.g., swap LightGBM for XGBoost): one line in
-  `model.py`. The Pipeline interface is unchanged, so `train.py` and
+- **Different model** (e.g., swap random forest for any other
+  sklearn-compatible estimator): one entry in `config.yaml`, read by `model.py`. The Pipeline interface is unchanged, so `train.py` and
   `evaluate.py` don't notice.
 - **Multi-class or loan-amount regression instead of binary approval:**
   `model.py` and the metrics half of `evaluate.py` change. `data.py` and
@@ -113,7 +115,11 @@ pipeline stays swappable.
 
 `data.py` + `notebooks/01_eda.ipynb` · `features.py` · `train.py` +
 `model.py` · `evaluate.py` (profit curve + calibration) · `fairness.py`
-(SHAP + proxy ablation). They integrate through `config.yaml` and the saved
-`pipeline.pkl` artifact, so no module blocks another mid-week. Put the least
+(SHAP + proxy ablation). They integrate through `config.yaml`, the frozen
+`data/processed/split.csv`, and the saved `.pkl` artifacts, so no module
+blocks another mid-week. Artifacts are gitignored. Each teammate regenerates
+them locally (`python -m src.data`, then `python -m src.train`), and the
+fixed seed makes that reproducible. `split.csv` is the one generated file
+that IS committed, so everyone shares the identical test set. Put the least
 confident team member on the EDA notebook — most visible piece in week one,
 hardest to get structurally wrong.

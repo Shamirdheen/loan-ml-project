@@ -1,12 +1,14 @@
-pandas
-numpy
-scikit-learn
-lightgbm
-shap
-matplotlib
-seaborn
-pyyaml
+# Minimum versions, so all 5 teammates' results line up. scikit-learn>=1.6 is
+# needed for FrozenEstimator (cv='prefit' calibration is deprecated there).
+pandas>=2.2
+numpy>=1.26
+scikit-learn>=1.6
+lightgbm>=4.3
+shap>=0.46
+matplotlib>=3.8
+seaborn>=0.13
+pyyaml>=6.0
 jupyter
 
-# add later, week 4 only:
-# streamlit
+# demo app (week 4):
+streamlit>=1.35

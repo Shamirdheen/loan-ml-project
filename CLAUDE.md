@@ -73,7 +73,8 @@ loan-approval/
   notebooks/
     01_eda.ipynb
   artifacts/
-    pipeline.pkl
+    pipeline.pkl              # uncalibrated, written by train.py
+    calibrated_pipeline.pkl   # written by evaluate.py; what fairness.py + app.py load
     metrics.json
     figures/
   app.py                        # Streamlit demo — week 4 only, do not build early

@@ -1,24 +1,46 @@
 seed: 42
+artifacts_dir: artifacts
 
 data:
   raw_path: data/raw/application_train.csv
+  split_path: data/processed/split.csv   # frozen train/test membership, by id_column
+  id_column: SK_ID_CURR
   target_column: TARGET
   protected_attribute: CODE_GENDER
   test_size: 0.2
   cv_folds: 5
 
-# These two numbers ARE the project. Fill them in as a team and write down
-# the reasoning — do not leave them at a default and move on.
+# These numbers ARE the project. Fill them in as a team and write down the
+# reasoning — do not leave them at a default and move on. evaluate.py refuses
+# to run while any of them is null.
+#
+# Both are RATES applied to each applicant's exposure_column (loan size), so
+# expected profit is per-applicant instead of one flat number for every loan:
+#   approve & repays  -> + expected_interest  * AMT_CREDIT
+#   approve & default -> - loss_given_default * AMT_CREDIT
+#   deny              ->   0
 cost_assumptions:
-  loss_given_default: null   # e.g. average outstanding principal at default
-  expected_interest: null    # e.g. avg interest income if the loan performs
+  exposure_column: AMT_CREDIT
+  loss_given_default: 0.60   # fraction of AMT_CREDIT lost on default
+  expected_interest: 0.15    # fraction of AMT_CREDIT earned if repaid
   reasoning: >
-    TODO — write down why these specific numbers, and what they're sourced
-    from (a stated assumption, an external benchmark, or the data itself).
+    Stated team assumptions, not fitted from the data (application_train has no
+    repayment history). LGD 0.60: a default on unsecured consumer credit loses
+    most of the exposure; ~40% is assumed recovered via collections. Interest
+    0.15: share of principal earned over the loan life if repaid in full. The
+    ratio (0.15 gain vs 0.60 loss) means one default wipes out four good loans,
+    so the profit-optimal threshold approves only applicants with default
+    probability below about 0.2. Sensitivity of the threshold to these two
+    numbers is reported in evaluate.py.
 
 models:
+  # DummyClassifier(strategy=prior) predicts the majority class for every row
+  # (same decisions as most_frequent) but outputs the base rate as its
+  # probability, so PR-AUC and Brier for the baseline are meaningful numbers.
   - name: baseline
-    type: majority_class
+    type: sklearn.dummy.DummyClassifier
+    params:
+      strategy: prior
 
   - name: logistic_regression
     type: sklearn.linear_model.LogisticRegression
@@ -37,22 +59,38 @@ models:
     params:
       n_estimators: 300
       class_weight: balanced_subsample
+      min_samples_leaf: 50   # starting point: cuts fit time and overfitting; revisit
+      n_jobs: -1
 
   - name: lightgbm
     type: lightgbm.LGBMClassifier
     params:
-      scale_pos_weight: 11   # placeholder — recompute from actual class ratio
+      scale_pos_weight: 11   # placeholder — model.py recomputes from the training split's class ratio
       n_estimators: 500
 
 calibration:
   method: isotonic          # CalibratedClassifierCV
-  split: cv                 # "cv" keeps all training rows; "holdout" is simpler
-                             # but costs you data — team decision, see notes
+  # "cv": CalibratedClassifierCV clones the (unfitted) pipeline and refits it
+  # inside cv_folds on the training split, so every training row is used for
+  # both fitting and calibration. Costs cv_folds extra fits. The alternative,
+  # a holdout slice of the training split + FrozenEstimator, is cheaper but
+  # gives up those rows. Team decision; document it here if you change it.
+  split: cv
+
+# The profit threshold is chosen on out-of-fold CALIBRATED probabilities from
+# the training split. The test set only reports profit at that fixed threshold.
+threshold:
+  selection_data: train_oof
 
 metrics:
   primary: pr_auc
   secondary: [roc_auc, brier_score, accuracy]
 
 fairness:
-  primary_metric: demographic_parity   # or equalized_odds — pick one, document why
-  run_proxy_ablation: true             # drop protected_attribute, retrain, compare gap
+  primary_metric: equalized_odds   # chosen over demographic_parity; argued in fairness.py
+  # Whether CODE_GENDER is a model input at all. Many credit regulations bar
+  # using it directly (e.g. ECOA in the US). If false, the ablation adds it
+  # back; if true, the ablation drops it. Team decision — features.py refuses
+  # to build while this is null.
+  protected_in_model: false
+  run_proxy_ablation: true
