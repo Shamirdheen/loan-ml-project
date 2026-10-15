@@ -47,5 +47,7 @@ python -m src.fairness    # equalized-odds report, CODE_GENDER ablation, SHAP re
 streamlit run app.py      # demo
 ```
 
-`evaluate.py` refuses to run twice (the test set is touched once). All modules were
-smoke-tested on a synthetic dataset; no result on the real data exists yet.
+`evaluate.py` refuses to run twice (the test set is touched once).
+
+**Status:** the full pipeline has run on the real data. Results, and what's still
+left to do, are in [`PROGRESS.md`](PROGRESS.md).
