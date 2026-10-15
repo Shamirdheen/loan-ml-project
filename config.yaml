@@ -19,10 +19,18 @@ data:
 #   approve & repays  -> + expected_interest  * AMT_CREDIT
 #   approve & default -> - loss_given_default * AMT_CREDIT
 #   deny              ->   0
+# plus a flat fixed_cost_per_loan on every APPROVED loan (origination,
+# underwriting, servicing), whatever the outcome. Expected profit of approving:
+#   AMT_CREDIT * ((1-p)*expected_interest - p*loss_given_default) - fixed_cost_per_loan
 cost_assumptions:
   exposure_column: AMT_CREDIT
   loss_given_default: 0.60   # fraction of AMT_CREDIT lost on default
   expected_interest: 0.15    # fraction of AMT_CREDIT earned if repaid
+  # PROVISIONAL (2026-10-15): 0 = no fixed cost, so results match the pre-fixed-cost
+  # model. Chosen for time, not on evidence. Team to set a real figure and reasoning.
+  # Note: with interest 0.15 and smallest loan 45,000, any value under 6,750 leaves
+  # every loan size profitable at zero risk.
+  fixed_cost_per_loan: 0     # same currency as AMT_CREDIT
   reasoning: >
     Stated team assumptions, not fitted from the data (application_train has no
     repayment history). LGD 0.60: a default on unsecured consumer credit loses

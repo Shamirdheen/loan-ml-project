@@ -10,8 +10,10 @@ Owns:
     - PR-AUC (primary), ROC-AUC, and Brier score. Accuracy is reported once, in
       the baseline row, to show why it was abandoned at an 8% base rate.
     - The expected-profit threshold sweep, using loss_given_default and
-      expected_interest (rates x AMT_CREDIT) from config.yaml. Must fail loudly
-      if either is null; never fall back to a default.
+      expected_interest (rates x AMT_CREDIT) plus fixed_cost_per_loan from
+      config.yaml. Must fail loudly if any is null; never fall back to a default.
+    - The zero-risk break-even loan size (fixed_cost / interest) and the
+      threshold-vs-loan-size figure.
     - Choosing the threshold on out-of-fold calibrated probabilities from the
       TRAINING split, and saving it to metrics.json for fairness.py and app.py.
     - The single, final evaluation on the held-out test set, which reports
@@ -52,23 +54,38 @@ from .data import artifact_path, load_config, load_test, load_train, read_metric
 
 def cost_rates(cfg):
     c = cfg["cost_assumptions"]
-    if c["loss_given_default"] is None or c["expected_interest"] is None:
-        raise ValueError("cost_assumptions in config.yaml are null; decide and document them first")
-    return c["loss_given_default"], c["expected_interest"]
+    names = ("loss_given_default", "expected_interest", "fixed_cost_per_loan")
+    missing = [n for n in names if c.get(n) is None]
+    if missing:
+        raise ValueError(f"cost_assumptions {missing} are null in config.yaml; decide and document them first")
+    if c["fixed_cost_per_loan"] < 0:
+        raise ValueError("fixed_cost_per_loan must be >= 0")
+    return tuple(c[n] for n in names)
 
 
-def profit(y, p, exposure, threshold, lgd, interest):
-    """Total expected profit of approving every applicant with p < threshold.
+def profit(y, p, exposure, threshold, lgd, interest, fixed_cost):
+    """Total realised profit of approving every applicant with p < threshold.
 
-    approve & repays -> +interest * exposure; approve & defaults -> -lgd * exposure.
+    approve & repays -> +interest * exposure - fixed_cost
+    approve & defaults -> -lgd * exposure - fixed_cost
+    Its expectation per applicant is exposure * ((1-p)*interest - p*lgd) - fixed_cost.
     """
     approve = p < threshold
-    gain = np.where(y == 0, interest * exposure, -lgd * exposure)
+    gain = np.where(y == 0, interest * exposure, -lgd * exposure) - fixed_cost
     return float(gain[approve].sum())
 
 
-def sweep(y, p, exposure, lgd, interest, grid):
-    return np.array([profit(y, p, exposure, t, lgd, interest) for t in grid])
+def sweep(y, p, exposure, lgd, interest, fixed_cost, grid):
+    return np.array([profit(y, p, exposure, t, lgd, interest, fixed_cost) for t in grid])
+
+
+def breakeven_threshold(exposure, lgd, interest, fixed_cost):
+    """Per-loan threshold where expected profit is exactly zero: approve iff p < this.
+
+    From exposure * ((1-p)*interest - p*lgd) = fixed_cost. Negative means no
+    applicant is profitable at that loan size, however safe.
+    """
+    return (interest - fixed_cost / exposure) / (interest + lgd)
 
 
 def metrics_at(y, p):
@@ -103,9 +120,30 @@ def profit_figure(cfg, grid, curve, best_t, theory_t):
     plt.close(fig)
 
 
+def threshold_vs_size_figure(cfg, exposure, lgd, interest, fixed_cost, best_t, min_credit):
+    """Break-even threshold by loan size, against the single global threshold actually used."""
+    lo, hi = np.percentile(exposure, [1, 99])
+    a = np.geomspace(max(min(lo, min_credit or lo) * 0.5, 1.0), max(hi, min_credit) * 1.5, 400)
+    fig, ax = plt.subplots(figsize=(6.5, 4))
+    ax.plot(a, np.clip(breakeven_threshold(a, lgd, interest, fixed_cost), 0, None),
+            label="break-even threshold for this loan size")
+    ax.axhline(interest / (interest + lgd), color="grey", ls=":", label="large-loan limit (no fixed cost)")
+    ax.axhline(best_t, color="C3", label=f"global threshold used {best_t:.3f}")
+    if min_credit > 0:
+        ax.axvline(min_credit, color="C2", ls="--", label=f"zero-risk break-even {min_credit:,.0f}")
+    ax.axvspan(*np.percentile(exposure, [5, 95]), color="grey", alpha=0.12,
+               label="middle 90% of training loans")
+    ax.set_xscale("log")
+    ax.set_xlabel("loan size (AMT_CREDIT, log scale)")
+    ax.set_ylabel("approve if P(default) < threshold")
+    ax.legend(fontsize=8)
+    fig.savefig(artifact_path(cfg, "figures/threshold_vs_loan_size.png"), dpi=130, bbox_inches="tight")
+    plt.close(fig)
+
+
 def main(rerun_test=False):
     cfg = load_config()
-    lgd, interest = cost_rates(cfg)
+    lgd, interest, fixed_cost = cost_rates(cfg)
     if cfg["calibration"]["split"] != "cv" or cfg["calibration"]["method"] != "isotonic":
         raise NotImplementedError("only isotonic calibration with split: cv is implemented")
     if "test" in read_metrics(cfg) and not rerun_test:
@@ -129,20 +167,25 @@ def main(rerun_test=False):
     p_cal = cross_val_predict(make_cal(), X, y, cv=skf, method="predict_proba")[:, 1]
     reliability_figure(cfg, y, p_raw, p_cal)
 
-    # Hypothesis: with calibrated p, approving iff p*LGD < (1-p)*interest is optimal,
-    # i.e. threshold = interest / (interest + LGD), the same for every loan size
-    # (both sides scale with exposure). The sweep checks that on real data.
+    # Hypothesis: a fixed cost per approved loan makes small loans unprofitable
+    # even at zero risk (below fixed_cost / interest), so the break-even threshold
+    # now rises with loan size instead of being one number. We still deploy ONE
+    # global threshold (fairness.py and app.py read a single value), chosen by the
+    # sweep, which nets the fixed cost out over the real loan-size mix. The
+    # threshold-vs-size figure shows where that single number is wrong.
     grid = np.linspace(0.01, 0.99, 197)
-    curve = sweep(y, p_cal, exposure, lgd, interest, grid)
+    curve = sweep(y, p_cal, exposure, lgd, interest, fixed_cost, grid)
     best_t = float(grid[curve.argmax()])
-    theory_t = interest / (interest + lgd)
+    theory_t = interest / (interest + lgd)   # large-loan limit; exact only when fixed_cost = 0
+    min_credit = fixed_cost / interest       # zero-risk applicant breaks even here
     profit_figure(cfg, grid, curve, best_t, theory_t)
+    threshold_vs_size_figure(cfg, exposure, lgd, interest, fixed_cost, best_t, min_credit)
     sensitivity = []
     for l in (0.4, 0.5, 0.6, 0.7, 0.8):
         for i in (0.10, 0.15, 0.20):
             t = i / (i + l)
             sensitivity.append({"lgd": l, "interest": i, "threshold": t,
-                                "train_oof_profit": profit(y, p_cal, exposure, t, l, i)})
+                                "train_oof_profit": profit(y, p_cal, exposure, t, l, i, fixed_cost)})
 
     cal = make_cal().fit(X, y)
     joblib.dump(cal, artifact_path(cfg, "calibrated_pipeline.pkl"))
@@ -151,10 +194,17 @@ def main(rerun_test=False):
 
     update_metrics(cfg, "train_oof", {
         "uncalibrated": metrics_at(y, p_raw), "calibrated": metrics_at(y, p_cal),
-        "profit_at_chosen": profit(y, p_cal, exposure, best_t, lgd, interest),
-        "profit_approve_all": profit(y, p_cal, exposure, 1.01, lgd, interest)})
-    update_metrics(cfg, "threshold", {"value": best_t, "theory": theory_t, "lgd": lgd,
-                                      "interest": interest, "chosen_on": "train_oof_calibrated"})
+        "profit_at_chosen": profit(y, p_cal, exposure, best_t, lgd, interest, fixed_cost),
+        "profit_approve_all": profit(y, p_cal, exposure, 1.01, lgd, interest, fixed_cost)})
+    update_metrics(cfg, "threshold", {
+        "value": best_t, "theory_large_loan_limit": theory_t, "lgd": lgd, "interest": interest,
+        "fixed_cost_per_loan": fixed_cost, "chosen_on": "train_oof_calibrated",
+        "min_credit_zero_risk_profitable": min_credit,
+        # how many training loans the global threshold would approve below that size
+        "train_share_below_min_credit": float((exposure <= min_credit).mean()),
+        "train_approved_below_min_credit": int(((p_cal < best_t) & (exposure <= min_credit)).sum())})
+    print(f"Zero-risk applicant is profitable only above AMT_CREDIT = {min_credit:,.2f} "
+          f"(fixed_cost {fixed_cost:,} / interest {interest})")
     update_metrics(cfg, "cost_sensitivity", sensitivity)
 
     # ---- the one and only test-set evaluation: threshold is already fixed ----
@@ -165,8 +215,8 @@ def main(rerun_test=False):
     test = {"calibrated": metrics_at(y_te, p_te),
             "uncalibrated": metrics_at(y_te, base.predict_proba(X_te)[:, 1]),
             "threshold": best_t,
-            "profit_at_threshold": profit(y_te, p_te, exp_te, best_t, lgd, interest),
-            "profit_approve_all": profit(y_te, p_te, exp_te, 1.01, lgd, interest),
+            "profit_at_threshold": profit(y_te, p_te, exp_te, best_t, lgd, interest, fixed_cost),
+            "profit_approve_all": profit(y_te, p_te, exp_te, 1.01, lgd, interest, fixed_cost),
             "approval_rate": float((p_te < best_t).mean()),
             "n": int(len(y_te))}
     update_metrics(cfg, "test", test)
