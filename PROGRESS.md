@@ -58,11 +58,10 @@ LightGBM wins, but only narrowly over logistic regression — worth saying in th
 - **Fixed cost per loan** (`evaluate.py`, `config.yaml`): profit =
   `AMT_CREDIT·((1−p)·interest − p·LGD) − fixed_cost`; fails loudly if null; reports the
   zero-risk break-even loan size (`fixed_cost / interest`) and plots threshold vs loan size.
-- **Streamlit app rebuilt** (`app.py`) — 4 interactive tabs: Decide (gauge, approve/deny card,
-  expected profit, denial reasons, what-if over loan size), Model (test metrics, PR-AUC ladder,
-  reliability, tree), Profit lab (cost sliders → live profit curve and best threshold, train OOF
-  only), Fairness (threshold slider → group rates and gaps, ablation). Fixed a startup crash
-  (it imported a `CATEGORICAL` list that no longer exists). Run: `streamlit run app.py`.
+- **Streamlit faculty demo** (`app.py` + `.streamlit/config.toml`) — product-style UI with
+  sample applicants (Typical / Strong file / High risk), live APPROVE/DENY, expected-profit
+  formula, denial reasons, loan-size what-if, model ladder, profit lab, fairness + ablation.
+  Still never loads the test set. Run: `streamlit run app.py`.
 - Verified by reading the code: fairness ablation never touches the test set; categorical
   columns are detected by dtype, not a hardcoded list.
 
