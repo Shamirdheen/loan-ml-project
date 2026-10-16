@@ -13,3 +13,7 @@ jupyter
 # demo app (week 4):
 streamlit>=1.50
 plotly>=5.20
+
+# HTML/CSS/JS demo (server.py serves web/ and the scoring API):
+fastapi>=0.115
+uvicorn>=0.30

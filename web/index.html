@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Loan Risk Studio</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%231b4f8a'/><text x='16' y='23' font-size='19' text-anchor='middle' fill='white' font-family='Arial'>₹</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <!-- Local copy (from the plotly pip package) so the demo works without internet. -->
+  <script src="vendor/plotly.min.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">₹</span>
+      <div>
+        <strong>Loan Risk Studio</strong>
+        <small>Home Credit default-risk model</small>
+      </div>
+    </div>
+    <span id="mode-pill" class="pill">Connecting…</span>
+  </header>
+
+  <main class="page">
+    <div id="demo-banner" class="banner warn" hidden>
+      <strong>Demo mode.</strong> The trained model is not on this PC, so scores come from a simple
+      hand-written formula in <code>demo_mock.py</code>. Use it to learn the screens, never to quote numbers.
+    </div>
+    <div id="load-error" class="banner error" hidden></div>
+
+    <section class="hero">
+      <div class="hero-text">
+        <h1>Should we lend to this applicant?</h1>
+        <p>The model estimates the chance of default, turns it into expected profit in rupees,
+          and approves only when the loan is expected to make money.</p>
+      </div>
+      <ol class="steps">
+        <li><span>1</span><div><b>Score risk</b><small>Calibrated P(default)</small></div></li>
+        <li><span>2</span><div><b>Price it</b><small>Expected profit in ₹</small></div></li>
+        <li><span>3</span><div><b>Decide</b><small>Approve if risk &lt; threshold</small></div></li>
+      </ol>
+    </section>
+
+    <section class="kpis">
+      <div class="kpi"><span>Approval threshold</span><strong id="kpi-threshold">—</strong></div>
+      <div class="kpi"><span>Loss given default</span><strong id="kpi-lgd">—</strong></div>
+      <div class="kpi"><span>Interest if repaid</span><strong id="kpi-interest">—</strong></div>
+      <div class="kpi"><span>Fixed cost / loan</span><strong id="kpi-fixed">—</strong></div>
+    </section>
+
+    <nav class="tabs" role="tablist">
+      <button class="tab active" role="tab" data-tab="decide">1 · Decide</button>
+      <button class="tab" role="tab" data-tab="model">2 · Model</button>
+      <button class="tab" role="tab" data-tab="profit">3 · Profit lab</button>
+      <button class="tab" role="tab" data-tab="fairness">4 · Fairness</button>
+    </nav>
+
+    <!-- ============================================================ Decide -->
+    <section class="panel" id="tab-decide">
+      <div class="decide-grid">
+        <form id="applicant" class="card" autocomplete="off">
+          <div class="card-head">
+            <h2>Applicant</h2>
+            <p class="hint">Pick a sample or edit any field — the decision updates live.
+              Fields not shown take the training median. Gender is not a model input.</p>
+          </div>
+          <div class="presets" id="presets"></div>
+
+          <fieldset>
+            <legend>Money</legend>
+            <div class="fgrid">
+            <label>Annual income
+              <div class="money"><span>₹</span><input type="number" name="income" min="10000" max="10000000" step="5000" required></div>
+              <small class="words" data-words="income"></small>
+            </label>
+            <label>Loan amount
+              <div class="money"><span>₹</span><input type="number" name="credit" min="45000" max="4050000" step="10000" required></div>
+              <small class="words" data-words="credit"></small>
+            </label>
+            <label>Yearly repayment (annuity)
+              <div class="money"><span>₹</span><input type="number" name="annuity" min="1000" max="300000" step="1000" required></div>
+              <small class="words" data-words="annuity"></small>
+            </label>
+            <div class="ratios">
+              <div><span>Loan ÷ income</span><b id="ratio-lti">—</b></div>
+              <div><span>Repayment ÷ income</span><b id="ratio-burden">—</b></div>
+            </div>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Person</legend>
+            <div class="fgrid">
+            <label>Age <output data-for="age" data-unit=" yrs"></output>
+              <input type="range" name="age" min="20" max="70" step="1">
+            </label>
+            <label>Years employed <output data-for="employed" data-unit=" yrs"></output>
+              <input type="range" name="employed" min="0" max="45" step="1">
+            </label>
+            <label class="check">
+              <input type="checkbox" name="no_job"> Pensioner / not employed
+            </label>
+            <label>Education
+              <select name="education" id="education"></select>
+            </label>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>External credit scores <span class="hint">0 = worst · 1 = best</span></legend>
+            <div class="fgrid">
+            <label>Bureau score 1 <output data-for="ext1"></output>
+              <input type="range" name="ext1" min="0" max="1" step="0.01">
+            </label>
+            <label>Bureau score 2 <output data-for="ext2"></output>
+              <input type="range" name="ext2" min="0" max="1" step="0.01">
+            </label>
+            <label>Bureau score 3 <output data-for="ext3"></output>
+              <input type="range" name="ext3" min="0" max="1" step="0.01">
+            </label>
+            </div>
+          </fieldset>
+        </form>
+
+        <div class="result-col">
+          <div class="card result" aria-live="polite">
+            <div id="verdict" class="verdict">
+              <div class="verdict-main">
+                <div class="kicker">Live decision</div>
+                <div class="headline">…</div>
+                <div class="sub">Scoring…</div>
+              </div>
+              <div class="verdict-risk">
+                <span>Default risk</span>
+                <strong id="risk-big">—</strong>
+                <em id="risk-band"></em>
+              </div>
+            </div>
+
+            <div class="riskbar" aria-hidden="true">
+              <div class="riskbar-track">
+                <div class="riskbar-safe" id="riskbar-safe"></div>
+                <div class="riskbar-marker" id="riskbar-marker"></div>
+              </div>
+              <div class="riskbar-labels"><span>0%</span><span id="riskbar-thr">threshold</span><span id="riskbar-max">40%</span></div>
+            </div>
+
+            <div class="metric-row">
+              <div class="kpi"><span>Expected profit if approved</span><strong id="expected">—</strong>
+                <em id="expected-tag"></em></div>
+              <div class="kpi"><span>Break-even risk for this loan</span><strong id="breakeven">—</strong>
+                <em class="neutral">risk where profit = ₹0</em></div>
+            </div>
+
+            <details class="formula-box" open>
+              <summary>How the profit is calculated</summary>
+              <div class="formula" id="formula"></div>
+              <p class="hint" id="formula-words"></p>
+            </details>
+
+            <div id="reasons" hidden>
+              <h3>Main reasons for denial</h3>
+              <p class="hint">Features pushing this applicant's risk up the most.</p>
+              <ul id="reason-list"></ul>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>What if the loan were a different size?</h2>
+          <p class="hint">Same applicant; repayment scales with the loan. The orange dot is the current loan.</p>
+        </div>
+        <div class="two-col">
+          <div id="whatif-risk" class="chart"></div>
+          <div id="whatif-profit" class="chart"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========================================== next modules (placeholders) -->
+    <section class="panel" id="tab-model" hidden>
+      <div class="card placeholder"><b>Model</b><p>Next module: test metrics, 5-model PR-AUC ladder, reliability curve.</p></div>
+    </section>
+    <section class="panel" id="tab-profit" hidden>
+      <div class="card placeholder"><b>Profit lab</b><p>Next module: cost sliders on training out-of-fold predictions.</p></div>
+    </section>
+    <section class="panel" id="tab-fairness" hidden>
+      <div class="card placeholder"><b>Fairness</b><p>Next module: equalized odds by CODE_GENDER and the gender-column ablation.</p></div>
+    </section>
+
+    <footer class="foot">Amounts are the dataset's own values shown in ₹ — no currency conversion is applied.</footer>
+  </main>
+</body>
+</html>
